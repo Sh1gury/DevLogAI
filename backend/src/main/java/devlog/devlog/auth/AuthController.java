@@ -1,0 +1,39 @@
+package devlog.devlog.auth;
+
+import devlog.devlog.auth.dto.AuthResponse;
+import devlog.devlog.auth.dto.LoginRequest;
+import devlog.devlog.auth.dto.RegisterRequest;
+import devlog.devlog.user.User;
+import devlog.devlog.user.UserResponse;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/auth")
+@RequiredArgsConstructor
+public class AuthController {
+
+    private final AuthService authService;
+
+    @PostMapping("/register")
+    @ResponseStatus(HttpStatus.CREATED)
+    public AuthResponse register(@Valid @RequestBody RegisterRequest request) {
+        return authService.register(request);
+    }
+
+    @PostMapping("/login")
+    public AuthResponse login(@Valid @RequestBody LoginRequest request) {
+        return authService.login(request);
+    }
+
+    @GetMapping("/me")
+    public UserResponse getMe(@AuthenticationPrincipal UUID userId) {
+        User user = authService.getCurrentUser(userId);
+        return new UserResponse(user.getId(), user.getUsername(), user.getEmail(), user.getCreatedAt());
+    }
+}
