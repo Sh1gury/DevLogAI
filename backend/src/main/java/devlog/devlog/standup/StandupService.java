@@ -1,5 +1,6 @@
-package devlog.devlog.standup;
+﻿package devlog.devlog.standup;
 
+import devlog.devlog.ai.GroqClient;
 import devlog.devlog.common.exception.ResourceNotFoundException;
 import devlog.devlog.common.exception.UnauthorizedException;
 import devlog.devlog.entry.Entry;
@@ -25,6 +26,7 @@ public class StandupService {
     private final StandupRepository standupRepository;
     private final EntryRepository entryRepository;
     private final UserRepository userRepository;
+    private final GroqClient groqClient;
 
     @Transactional(readOnly = true)
     public List<StandupResponse> getStandups(UUID userId) {
@@ -66,12 +68,15 @@ public class StandupService {
                         .anyMatch(et -> "blocker".equalsIgnoreCase(et.getTag().getName())))
                 .toList();
 
-        String yesterday = yesterdayEntries.isEmpty() ? "No entries yesterday"
+        String rawYesterday = yesterdayEntries.isEmpty() ? "No entries yesterday"
                 : yesterdayEntries.stream().map(Entry::getContent).collect(Collectors.joining("\n\n"));
-        String today = todayEntries.isEmpty() ? "No entries today"
+        String rawToday = todayEntries.isEmpty() ? "No entries today"
                 : todayEntries.stream().map(Entry::getContent).collect(Collectors.joining("\n\n"));
-        String blockers = blockerEntries.isEmpty() ? "No blockers"
+        String rawBlockers = blockerEntries.isEmpty() ? "No blockers"
                 : blockerEntries.stream().map(Entry::getContent).collect(Collectors.joining("\n\n"));
+
+        String aiResponse = groqClient.complete(buildStandupPrompt(rawYesterday, rawToday, rawBlockers, standupDate));
+        StandupSections sections = parseSections(aiResponse, rawYesterday, rawToday, rawBlockers);
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -79,9 +84,9 @@ public class StandupService {
         Standup standup = Standup.builder()
                 .user(user)
                 .standupDate(standupDate)
-                .yesterday(yesterday)
-                .today(today)
-                .blockers(blockers)
+                .yesterday(sections.yesterday())
+                .today(sections.today())
+                .blockers(sections.blockers())
                 .generatedAt(LocalDateTime.now())
                 .build();
 
@@ -98,5 +103,42 @@ public class StandupService {
     private StandupResponse toResponse(Standup s) {
         return new StandupResponse(s.getId(), s.getStandupDate(),
                 s.getYesterday(), s.getToday(), s.getBlockers(), s.getGeneratedAt());
+    }
+
+    private String buildStandupPrompt(String yesterday, String today, String blockers, LocalDate date) {
+        return "You are a developer assistant. Format this daily standup for " + date + ".\n\n"
+                + "Yesterday's work:\n" + yesterday + "\n\n"
+                + "Today's plan:\n" + today + "\n\n"
+                + "Potential blockers:\n" + blockers + "\n\n"
+                + "Return ONLY the formatted standup with these exact section markers, nothing else:\n"
+                + "[YESTERDAY]\n"
+                + "formatted yesterday content here\n"
+                + "[TODAY]\n"
+                + "formatted today content here\n"
+                + "[BLOCKERS]\n"
+                + "formatted blockers content here\n\n"
+                + "Rules: each section is 1-3 bullet points starting with '- '. Be brief and professional.";
+    }
+
+    private record StandupSections(String yesterday, String today, String blockers) {}
+
+    private StandupSections parseSections(String aiResponse, String fallbackY, String fallbackT, String fallbackB) {
+        String y = extractBetween(aiResponse, "[YESTERDAY]", "[TODAY]");
+        String t = extractBetween(aiResponse, "[TODAY]", "[BLOCKERS]");
+        String b = extractBetween(aiResponse, "[BLOCKERS]", null);
+        return new StandupSections(
+                y.isBlank() ? fallbackY : y,
+                t.isBlank() ? fallbackT : t,
+                b.isBlank() ? fallbackB : b
+        );
+    }
+
+    private String extractBetween(String text, String startMarker, String endMarker) {
+        int startIdx = text.indexOf(startMarker);
+        if (startIdx == -1) return "";
+        startIdx += startMarker.length();
+        int endIdx = endMarker != null ? text.indexOf(endMarker, startIdx) : text.length();
+        if (endIdx == -1) endIdx = text.length();
+        return text.substring(startIdx, endIdx).trim();
     }
 }

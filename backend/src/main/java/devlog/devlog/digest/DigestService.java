@@ -1,5 +1,6 @@
-package devlog.devlog.digest;
+﻿package devlog.devlog.digest;
 
+import devlog.devlog.ai.GroqClient;
 import devlog.devlog.common.exception.ResourceNotFoundException;
 import devlog.devlog.common.exception.UnauthorizedException;
 import devlog.devlog.digest.dto.DigestResponse;
@@ -16,6 +17,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -25,6 +27,7 @@ public class DigestService {
     private final EntryRepository entryRepository;
     private final EntryTagRepository entryTagRepository;
     private final UserRepository userRepository;
+    private final GroqClient groqClient;
 
     @Transactional(readOnly = true)
     public List<DigestResponse> getDigests(UUID userId) {
@@ -71,13 +74,15 @@ public class DigestService {
         stats.put("avg_mood", avgMood);
         stats.put("entry_count", entries.size());
 
+        String aiSummary = groqClient.complete(buildDigestPrompt(start, end, entries, tagCounts, avgMood));
+
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         Digest digest = Digest.builder()
                 .user(user)
                 .weekStart(start)
-                .aiSummary("AI summary will be available soon")
+                .aiSummary(aiSummary)
                 .stats(stats)
                 .generatedAt(LocalDateTime.now())
                 .build();
@@ -105,5 +110,36 @@ public class DigestService {
                 .stats(digest.getStats())
                 .generatedAt(digest.getGeneratedAt())
                 .build();
+    }
+
+    private String buildDigestPrompt(LocalDate start, LocalDate end, List<Entry> entries,
+                                     Map<String, Integer> tagCounts, double avgMood) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("You are a developer productivity assistant. ");
+        sb.append("Write a concise weekly digest based on the journal entries below.\n\n");
+        sb.append("Period: ").append(start).append(" to ").append(end).append("\n");
+        sb.append("Total entries: ").append(entries.size()).append("\n");
+        sb.append("Average mood (scale 1-5): ").append(String.format("%.1f", avgMood)).append("\n");
+
+        if (!tagCounts.isEmpty()) {
+            String topTags = tagCounts.entrySet().stream()
+                    .limit(5)
+                    .map(e -> e.getKey() + " (" + e.getValue() + "x)")
+                    .collect(Collectors.joining(", "));
+            sb.append("Top tags: ").append(topTags).append("\n");
+        }
+
+        sb.append("\nJournal entries:\n");
+        entries.stream().limit(15).forEach(e -> {
+            sb.append("---\n");
+            sb.append("Date: ").append(e.getEntryDate()).append("\n");
+            if (e.getMoodScore() != null) sb.append("Mood: ").append(e.getMoodScore()).append("/5\n");
+            sb.append(e.getContent()).append("\n");
+        });
+
+        sb.append("\nTask: Write 2-3 paragraphs summarizing the main topics worked on this week, ");
+        sb.append("productivity patterns, and mood trends. ");
+        sb.append("Use past tense. Be professional and encouraging. Do not use bullet lists.");
+        return sb.toString();
     }
 }
