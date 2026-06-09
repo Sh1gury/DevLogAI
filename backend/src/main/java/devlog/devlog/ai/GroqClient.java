@@ -1,4 +1,4 @@
-﻿package devlog.devlog.ai;
+package devlog.devlog.ai;
 
 import devlog.devlog.ai.dto.ChatRequest;
 import devlog.devlog.ai.dto.ChatResponse;

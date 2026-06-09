@@ -4,58 +4,56 @@ import devlog.devlog.auth.dto.AuthResponse;
 import devlog.devlog.auth.dto.LoginRequest;
 import devlog.devlog.auth.dto.RegisterRequest;
 import devlog.devlog.common.exception.DuplicateResourceException;
-import devlog.devlog.common.exception.ResourceNotFoundException;
-import devlog.devlog.common.exception.UnauthorizedException;
-import devlog.devlog.user.User;
-import devlog.devlog.user.UserRepository;
+import devlog.devlog.common.exception.InvalidCredentialsException;
+import devlog.devlog.user.AuthCredentials;
+import devlog.devlog.user.UserResponse;
+import devlog.devlog.user.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
-    private final UserRepository userRepository;
+    private final UserService userService;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail()))
+        if (userService.existsByEmail(request.getEmail()))
             throw new DuplicateResourceException("Email already in use");
-        if (userRepository.existsByUsername(request.getUsername()))
+        if (userService.existsByUsername(request.getUsername()))
             throw new DuplicateResourceException("Username already taken");
 
-        User user = User.builder()
-                .email(request.getEmail())
-                .passwordHash(passwordEncoder.encode(request.getPassword()))
-                .username(request.getUsername())
-                .createdAt(LocalDateTime.now())
-                .build();
+        UserResponse user = userService.createUser(
+                request.getEmail(),
+                passwordEncoder.encode(request.getPassword()),
+                request.getUsername()
+        );
 
-        userRepository.save(user);
-        String token = jwtTokenProvider.generateToken(user.getId().toString());
-        return new AuthResponse(token, user.getId(), user.getUsername(), user.getEmail());
+        String token = jwtTokenProvider.generateToken(user.id().toString());
+        return new AuthResponse(token, user.id(), user.username(), user.email());
     }
 
+    @Transactional(readOnly = true)
     public AuthResponse login(LoginRequest request) {
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        AuthCredentials credentials = userService.findCredentialsByEmail(request.getEmail())
+                .orElseThrow(() -> new InvalidCredentialsException("Invalid email or password"));
 
-        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash()))
-            throw new UnauthorizedException("Invalid password");
+        if (!passwordEncoder.matches(request.getPassword(), credentials.passwordHash()))
+            throw new InvalidCredentialsException("Invalid email or password");
 
-        String token = jwtTokenProvider.generateToken(user.getId().toString());
-        return new AuthResponse(token, user.getId(), user.getUsername(), user.getEmail());
+        String token = jwtTokenProvider.generateToken(credentials.id().toString());
+        return new AuthResponse(token, credentials.id(), credentials.username(), credentials.email());
     }
 
-    public User getCurrentUser(UUID userId) {
-        return userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    @Transactional(readOnly = true)
+    public UserResponse getCurrentUser(UUID userId) {
+        return userService.getUserById(userId);
     }
 }

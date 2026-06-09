@@ -1,4 +1,4 @@
-﻿package devlog.devlog.ai.dto;
+package devlog.devlog.ai.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 

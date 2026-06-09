@@ -3,23 +3,21 @@ package devlog.devlog.entry;
 import devlog.devlog.common.exception.ResourceNotFoundException;
 import devlog.devlog.common.exception.UnauthorizedException;
 import devlog.devlog.entry.dto.EntryDetailResponse;
+import devlog.devlog.entry.dto.EntryForAiDto;
 import devlog.devlog.entry.dto.EntryRequest;
 import devlog.devlog.entry.dto.EntryResponse;
 import devlog.devlog.profile.dto.HeatmapResponse;
-import devlog.devlog.tag.EntryTag;
-import devlog.devlog.tag.EntryTagId;
-import devlog.devlog.tag.EntryTagRepository;
-import devlog.devlog.tag.Tag;
-import devlog.devlog.tag.TagRepository;
+import devlog.devlog.tag.TagService;
 import devlog.devlog.tag.dto.TagResponse;
-import devlog.devlog.user.User;
-import devlog.devlog.user.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -29,48 +27,40 @@ import java.util.regex.Pattern;
 public class EntryService {
 
     private final EntryRepository entryRepository;
-    private final TagRepository tagRepository;
-    private final EntryTagRepository entryTagRepository;
-    private final UserRepository userRepository;
+    private final TagService tagService;
 
     @Transactional
     public EntryResponse createEntry(UUID userId, EntryRequest request) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         Entry entry = Entry.builder()
-                .user(user)
+                .userId(userId)
                 .content(request.getContent())
                 .entryDate(request.getEntryDate())
                 .moodScore(request.getMoodScore())
                 .isPublic(Boolean.TRUE.equals(request.getIsPublic()))
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
+                .createdAt(now)
+                .updatedAt(now)
                 .build();
-
         entryRepository.save(entry);
-        syncTags(entry, parseTagsFromContent(request.getContent()), userId);
-        return toResponse(entry);
+        tagService.syncTagsForEntry(entry.getId(), userId, parseTagsFromContent(request.getContent()));
+        return toResponse(reloadWithTags(entry.getId()));
     }
 
     @Transactional
     public EntryResponse updateEntry(UUID userId, UUID entryId, EntryRequest request) {
         if (!entryRepository.existsByIdAndUserId(entryId, userId))
             throw new UnauthorizedException("Access denied");
-
         Entry entry = entryRepository.findById(entryId)
                 .orElseThrow(() -> new ResourceNotFoundException("Entry not found"));
-
         entry.setContent(request.getContent());
         entry.setEntryDate(request.getEntryDate());
         entry.setMoodScore(request.getMoodScore());
         entry.setPublic(Boolean.TRUE.equals(request.getIsPublic()));
-        entry.setUpdatedAt(LocalDateTime.now());
-
-        entryTagRepository.deleteByEntryId(entryId);
+        entry.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
+        tagService.deleteTagsForEntry(entryId);
         entryRepository.save(entry);
-        syncTags(entry, parseTagsFromContent(request.getContent()), userId);
-        return toResponse(entry);
+        tagService.syncTagsForEntry(entryId, userId, parseTagsFromContent(request.getContent()));
+        return toResponse(reloadWithTags(entryId));
     }
 
     @Transactional
@@ -84,24 +74,31 @@ public class EntryService {
     public EntryDetailResponse getEntry(UUID userId, UUID entryId) {
         Entry entry = entryRepository.findById(entryId)
                 .orElseThrow(() -> new ResourceNotFoundException("Entry not found"));
-        if (!entry.getUser().getId().equals(userId))
+        if (!entry.getUserId().equals(userId))
             throw new UnauthorizedException("Access denied");
         return toDetailResponse(entry);
     }
 
     @Transactional(readOnly = true)
+    public Page<EntryResponse> getEntries(UUID userId, LocalDate from, LocalDate to, Pageable pageable) {
+        Page<Entry> page = (from != null && to != null)
+                ? entryRepository.findByUserIdAndEntryDateBetweenOrderByEntryDateDesc(userId, from, to, pageable)
+                : entryRepository.findByUserIdOrderByEntryDateDesc(userId, pageable);
+        return page.map(this::toResponse);
+    }
+
+    /** Unpaginated list used internally by other modules (e.g. profile aggregation). */
+    @Transactional(readOnly = true)
     public List<EntryResponse> getEntries(UUID userId, LocalDate from, LocalDate to) {
-        List<Entry> entries = (from != null && to != null)
-                ? entryRepository.findByUserIdAndEntryDateBetweenOrderByEntryDateDesc(userId, from, to)
-                : entryRepository.findByUserIdOrderByEntryDateDesc(userId);
-        return entries.stream().map(this::toResponse).toList();
+        return entryRepository.findByUserIdOrderByEntryDateDesc(userId).stream()
+                .map(this::toResponse).toList();
     }
 
     @Transactional(readOnly = true)
     public HeatmapResponse getHeatmapData(UUID userId, int year) {
-        List<Object[]> rows = entryRepository.countEntriesByDateForYear(userId, year);
         Map<LocalDate, Integer> data = new LinkedHashMap<>();
-        rows.forEach(r -> data.put((LocalDate) r[0], ((Long) r[1]).intValue()));
+        entryRepository.countEntriesByDateForYear(userId, year)
+                .forEach(r -> data.put(r.entryDate(), (int) r.count()));
         int totalEntries = data.values().stream().mapToInt(i -> i).sum();
         int maxEntriesInDay = data.values().stream().mapToInt(i -> i).max().orElse(0);
         return new HeatmapResponse(year, data, totalEntries, data.size(), maxEntriesInDay);
@@ -114,8 +111,57 @@ public class EntryService {
         Entry entry = entryRepository.findById(entryId)
                 .orElseThrow(() -> new ResourceNotFoundException("Entry not found"));
         entry.setPublic(isPublic);
-        entry.setUpdatedAt(LocalDateTime.now());
+        entry.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
         return toResponse(entryRepository.save(entry));
+    }
+
+    // ── Cross-module read API (DTOs only) ───────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public List<EntryForAiDto> getEntriesForPeriod(UUID userId, LocalDate from, LocalDate to) {
+        return entryRepository.findEntriesWithTagsBetween(userId, from, to).stream()
+                .map(e -> new EntryForAiDto(
+                        e.getEntryDate(),
+                        e.getMoodScore(),
+                        e.getContent(),
+                        e.getEntryTags() == null ? List.of() :
+                                e.getEntryTags().stream().map(et -> et.getTag().getName()).toList()
+                ))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<EntryResponse> getPublicEntries(UUID userId) {
+        return entryRepository.findPublicEntriesByUserId(userId).stream()
+                .map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<LocalDate> getAllEntryDates(UUID userId) {
+        return entryRepository.findAllEntryDatesByUserId(userId);
+    }
+
+    @Transactional(readOnly = true)
+    public long countActiveDays(UUID userId) {
+        return entryRepository.countActiveDays(userId);
+    }
+
+    @Transactional(readOnly = true)
+    public double getAverageMoodForPeriod(UUID userId, LocalDate from, LocalDate to) {
+        Double avg = entryRepository.averageMoodForPeriod(userId, from, to);
+        return avg != null ? avg : 0;
+    }
+
+    @Transactional(readOnly = true)
+    public int countEntriesForPeriod(UUID userId, LocalDate from, LocalDate to) {
+        return (int) entryRepository.countByUserIdAndEntryDateBetween(userId, from, to);
+    }
+
+    // ── Private ─────────────────────────────────────────────────────────────────
+
+    private Entry reloadWithTags(UUID entryId) {
+        return entryRepository.findByIdWithTags(entryId)
+                .orElseThrow(() -> new ResourceNotFoundException("Entry not found"));
     }
 
     private List<String> parseTagsFromContent(String content) {
@@ -124,20 +170,6 @@ public class EntryService {
         List<String> tags = new ArrayList<>();
         while (matcher.find()) tags.add(matcher.group(1).toLowerCase());
         return tags.stream().distinct().toList();
-    }
-
-    private void syncTags(Entry entry, List<String> tagNames, UUID userId) {
-        User user = entry.getUser();
-        for (String tagName : tagNames) {
-            Tag tag = tagRepository.findByUserIdAndName(userId, tagName)
-                    .orElseGet(() -> tagRepository.save(Tag.builder()
-                            .user(user)
-                            .name(tagName)
-                            .color("#808080")
-                            .build()));
-            EntryTagId id = new EntryTagId(entry.getId(), tag.getId());
-            entryTagRepository.save(new EntryTag(id, entry, tag));
-        }
     }
 
     private EntryResponse toResponse(Entry entry) {

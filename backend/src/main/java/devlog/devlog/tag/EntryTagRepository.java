@@ -1,5 +1,6 @@
 package devlog.devlog.tag;
 
+import devlog.devlog.tag.dto.TagUsageCount;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -15,13 +16,14 @@ public interface EntryTagRepository extends JpaRepository<EntryTag, EntryTagId> 
     @Query("DELETE FROM EntryTag et WHERE et.entry.id = :entryId")
     void deleteByEntryId(@Param("entryId") UUID entryId);
 
-    @Query("SELECT et.tag.name, et.tag.color, COUNT(et) FROM EntryTag et " +
-           "WHERE et.entry.user.id = :userId " +
+    @Query("SELECT new devlog.devlog.tag.dto.TagUsageCount(et.tag.name, et.tag.color, COUNT(et)) " +
+           "FROM EntryTag et " +
+           "WHERE et.entry.userId = :userId " +
            "AND et.entry.entryDate BETWEEN :from AND :to " +
            "GROUP BY et.tag.name, et.tag.color ORDER BY COUNT(et) DESC")
-    List<Object[]> countTagUsageForPeriod(@Param("userId") UUID userId,
-                                          @Param("from") LocalDate from,
-                                          @Param("to") LocalDate to);
+    List<TagUsageCount> countTagUsageForPeriod(@Param("userId") UUID userId,
+                                               @Param("from") LocalDate from,
+                                               @Param("to") LocalDate to);
 
     @Query("SELECT COUNT(et) FROM EntryTag et WHERE et.tag.id = :tagId")
     long countByTagId(@Param("tagId") UUID tagId);

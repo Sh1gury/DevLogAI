@@ -3,7 +3,6 @@ package devlog.devlog.auth;
 import devlog.devlog.auth.dto.AuthResponse;
 import devlog.devlog.auth.dto.LoginRequest;
 import devlog.devlog.auth.dto.RegisterRequest;
-import devlog.devlog.user.User;
 import devlog.devlog.user.UserResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -33,7 +32,6 @@ public class AuthController {
 
     @GetMapping("/me")
     public UserResponse getMe(@AuthenticationPrincipal UUID userId) {
-        User user = authService.getCurrentUser(userId);
-        return new UserResponse(user.getId(), user.getUsername(), user.getEmail(), user.getCreatedAt());
+        return authService.getCurrentUser(userId);
     }
 }

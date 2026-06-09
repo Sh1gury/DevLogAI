@@ -26,12 +26,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String token = extractToken(request);
-        if (token != null && jwtTokenProvider.validateToken(token)) {
-            String userId = jwtTokenProvider.getUserIdFromToken(token);
-            UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
-                    UUID.fromString(userId), null, List.of()
-            );
-            SecurityContextHolder.getContext().setAuthentication(auth);
+        if (token != null) {
+            try {
+                UUID userId = UUID.fromString(jwtTokenProvider.getUserIdFromToken(token));
+                UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                        userId, null, List.of()
+                );
+                SecurityContextHolder.getContext().setAuthentication(auth);
+            } catch (Exception ignored) {
+                // Invalid/expired token → leave context unauthenticated; entry point handles the 401.
+            }
         }
         filterChain.doFilter(request, response);
     }

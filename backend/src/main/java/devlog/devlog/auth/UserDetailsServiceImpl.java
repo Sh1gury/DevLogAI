@@ -1,7 +1,7 @@
 package devlog.devlog.auth;
 
-import devlog.devlog.user.User;
-import devlog.devlog.user.UserRepository;
+import devlog.devlog.user.AuthCredentials;
+import devlog.devlog.user.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -15,15 +15,15 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class UserDetailsServiceImpl implements UserDetailsService {
 
-    private final UserRepository userRepository;
+    private final UserService userService;
 
     @Override
     public UserDetails loadUserByUsername(String userId) throws UsernameNotFoundException {
-        User user = userRepository.findById(UUID.fromString(userId))
+        AuthCredentials credentials = userService.findCredentialsById(UUID.fromString(userId))
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + userId));
         return new org.springframework.security.core.userdetails.User(
-                user.getId().toString(),
-                user.getPasswordHash(),
+                credentials.id().toString(),
+                credentials.passwordHash(),
                 Collections.emptyList()
         );
     }

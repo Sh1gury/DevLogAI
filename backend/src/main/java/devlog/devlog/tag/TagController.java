@@ -1,5 +1,6 @@
 package devlog.devlog.tag;
 
+import devlog.devlog.entry.EntryService;
 import devlog.devlog.tag.dto.StatsResponse;
 import devlog.devlog.tag.dto.TagRequest;
 import devlog.devlog.tag.dto.TagResponse;
@@ -10,6 +11,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
@@ -19,6 +21,7 @@ import java.util.UUID;
 public class TagController {
 
     private final TagService tagService;
+    private final EntryService entryService;
 
     @GetMapping
     public List<TagResponse> getTags(@AuthenticationPrincipal UUID userId) {
@@ -49,6 +52,10 @@ public class TagController {
     public StatsResponse getTagStats(@AuthenticationPrincipal UUID userId,
                                      @RequestParam(required = false) LocalDate from,
                                      @RequestParam(required = false) LocalDate to) {
-        return tagService.getTagStats(userId, from, to);
+        LocalDate effectiveFrom = from != null ? from : LocalDate.of(2000, 1, 1);
+        LocalDate effectiveTo = to != null ? to : LocalDate.now(ZoneOffset.UTC);
+        double avgMood = entryService.getAverageMoodForPeriod(userId, effectiveFrom, effectiveTo);
+        int totalEntries = entryService.countEntriesForPeriod(userId, effectiveFrom, effectiveTo);
+        return tagService.getTagStats(userId, effectiveFrom, effectiveTo, avgMood, totalEntries);
     }
 }

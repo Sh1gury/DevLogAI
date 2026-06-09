@@ -1,6 +1,5 @@
 package devlog.devlog.auth;
 
-import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
@@ -28,6 +27,10 @@ public class JwtTokenProvider {
                 .compact();
     }
 
+    /**
+     * Verifies the signature/expiration and returns the subject (userId) in a single parse.
+     * Throws {@link io.jsonwebtoken.JwtException} (or IllegalArgumentException) if the token is invalid.
+     */
     public String getUserIdFromToken(String token) {
         return Jwts.parser()
                 .verifyWith(getSigningKey())
@@ -35,15 +38,6 @@ public class JwtTokenProvider {
                 .parseSignedClaims(token)
                 .getPayload()
                 .getSubject();
-    }
-
-    public boolean validateToken(String token) {
-        try {
-            Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token);
-            return true;
-        } catch (JwtException | IllegalArgumentException e) {
-            return false;
-        }
     }
 
     private SecretKey getSigningKey() {

@@ -1,14 +1,12 @@
-﻿package devlog.devlog.digest;
+package devlog.devlog.digest;
 
 import devlog.devlog.ai.GroqClient;
 import devlog.devlog.common.exception.ResourceNotFoundException;
 import devlog.devlog.common.exception.UnauthorizedException;
 import devlog.devlog.digest.dto.DigestResponse;
-import devlog.devlog.entry.Entry;
-import devlog.devlog.entry.EntryRepository;
-import devlog.devlog.tag.EntryTagRepository;
-import devlog.devlog.user.User;
-import devlog.devlog.user.UserRepository;
+import devlog.devlog.entry.EntryService;
+import devlog.devlog.entry.dto.EntryForAiDto;
+import devlog.devlog.tag.TagService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -24,9 +23,8 @@ import java.util.stream.Collectors;
 public class DigestService {
 
     private final DigestRepository digestRepository;
-    private final EntryRepository entryRepository;
-    private final EntryTagRepository entryTagRepository;
-    private final UserRepository userRepository;
+    private final EntryService entryService;
+    private final TagService tagService;
     private final GroqClient groqClient;
 
     @Transactional(readOnly = true)
@@ -39,7 +37,7 @@ public class DigestService {
     public DigestResponse getDigest(UUID userId, UUID digestId) {
         Digest digest = digestRepository.findById(digestId)
                 .orElseThrow(() -> new ResourceNotFoundException("Digest not found"));
-        if (!digest.getUser().getId().equals(userId))
+        if (!digest.getUserId().equals(userId))
             throw new UnauthorizedException("Access denied");
         return toResponse(digest);
     }
@@ -58,15 +56,12 @@ public class DigestService {
         Optional<Digest> existing = digestRepository.findByUserIdAndWeekStart(userId, start);
         if (existing.isPresent()) return toResponse(existing.get());
 
-        List<Entry> entries = entryRepository.findEntriesWithTagsBetween(userId, start, end);
-
-        List<Object[]> tagRows = entryTagRepository.countTagUsageForPeriod(userId, start, end);
-        Map<String, Integer> tagCounts = new LinkedHashMap<>();
-        tagRows.forEach(r -> tagCounts.put((String) r[0], ((Long) r[2]).intValue()));
+        List<EntryForAiDto> entries = entryService.getEntriesForPeriod(userId, start, end);
+        Map<String, Integer> tagCounts = tagService.getTagUsageCounts(userId, start, end);
 
         double avgMood = entries.stream()
-                .filter(e -> e.getMoodScore() != null)
-                .mapToInt(Entry::getMoodScore)
+                .filter(e -> e.moodScore() != null)
+                .mapToInt(EntryForAiDto::moodScore)
                 .average().orElse(0);
 
         Map<String, Object> stats = new LinkedHashMap<>();
@@ -76,15 +71,12 @@ public class DigestService {
 
         String aiSummary = groqClient.complete(buildDigestPrompt(start, end, entries, tagCounts, avgMood));
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
         Digest digest = Digest.builder()
-                .user(user)
+                .userId(userId)
                 .weekStart(start)
                 .aiSummary(aiSummary)
                 .stats(stats)
-                .generatedAt(LocalDateTime.now())
+                .generatedAt(LocalDateTime.now(ZoneOffset.UTC))
                 .build();
 
         return toResponse(digestRepository.save(digest));
@@ -98,7 +90,7 @@ public class DigestService {
     }
 
     public LocalDate getCurrentWeekStart() {
-        return LocalDate.now().with(DayOfWeek.MONDAY);
+        return LocalDate.now(ZoneOffset.UTC).with(DayOfWeek.MONDAY);
     }
 
     public DigestResponse toResponse(Digest digest) {
@@ -112,7 +104,7 @@ public class DigestService {
                 .build();
     }
 
-    private String buildDigestPrompt(LocalDate start, LocalDate end, List<Entry> entries,
+    private String buildDigestPrompt(LocalDate start, LocalDate end, List<EntryForAiDto> entries,
                                      Map<String, Integer> tagCounts, double avgMood) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are a developer productivity assistant. ");
@@ -122,8 +114,7 @@ public class DigestService {
         sb.append("Average mood (scale 1-5): ").append(String.format("%.1f", avgMood)).append("\n");
 
         if (!tagCounts.isEmpty()) {
-            String topTags = tagCounts.entrySet().stream()
-                    .limit(5)
+            String topTags = tagCounts.entrySet().stream().limit(5)
                     .map(e -> e.getKey() + " (" + e.getValue() + "x)")
                     .collect(Collectors.joining(", "));
             sb.append("Top tags: ").append(topTags).append("\n");
@@ -132,9 +123,9 @@ public class DigestService {
         sb.append("\nJournal entries:\n");
         entries.stream().limit(15).forEach(e -> {
             sb.append("---\n");
-            sb.append("Date: ").append(e.getEntryDate()).append("\n");
-            if (e.getMoodScore() != null) sb.append("Mood: ").append(e.getMoodScore()).append("/5\n");
-            sb.append(e.getContent()).append("\n");
+            sb.append("Date: ").append(e.entryDate()).append("\n");
+            if (e.moodScore() != null) sb.append("Mood: ").append(e.moodScore()).append("/5\n");
+            sb.append(e.content()).append("\n");
         });
 
         sb.append("\nTask: Write 2-3 paragraphs summarizing the main topics worked on this week, ");

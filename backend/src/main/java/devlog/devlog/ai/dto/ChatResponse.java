@@ -1,4 +1,4 @@
-﻿package devlog.devlog.ai.dto;
+package devlog.devlog.ai.dto;
 
 import java.util.List;
 

@@ -1,4 +1,4 @@
-﻿package devlog.devlog.ai;
+package devlog.devlog.ai;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
