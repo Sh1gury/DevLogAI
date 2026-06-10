@@ -4,6 +4,7 @@ import devlog.devlog.auth.dto.AuthResponse;
 import devlog.devlog.auth.dto.LoginRequest;
 import devlog.devlog.auth.dto.RegisterRequest;
 import devlog.devlog.user.UserResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -31,6 +32,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
+    @SecurityRequirement(name = "bearerAuth")
     public UserResponse getMe(@AuthenticationPrincipal UUID userId) {
         return authService.getCurrentUser(userId);
     }

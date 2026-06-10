@@ -10,6 +10,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -18,6 +20,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/tags")
 @RequiredArgsConstructor
+@SecurityRequirement(name = "bearerAuth")
 public class TagController {
 
     private final TagService tagService;
